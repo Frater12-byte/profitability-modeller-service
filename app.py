@@ -195,10 +195,13 @@ def build_seasonality(ws, today_str, ag_rows):
             for col in [4, 5]:
                 c = ws.cell(r, col, ""); c.fill = fill(bg); c.border = bdr()
             # F/G – forecast: YTD TV/GP ÷ ytd_cumulative × month_wt
-            c = ws.cell(r, 6, f"=IFERROR(SUM(D$4:D${3+ytd_m})/C{3+ytd_m}*B{r},0)")
+            ytd_cum_cell = f"C{3+ytd_m}"   # e.g. C6 for March
+            ytd_tv_sum   = f"SUM(D$4:D${3+ytd_m})"
+            ytd_gp_sum   = f"SUM(E$4:E${3+ytd_m})"
+            c = ws.cell(r, 6, f"=IFERROR({ytd_tv_sum}/{ytd_cum_cell}*B{r},0)")
             c.font = bf(color="006100"); c.fill = fill(LIGHT_GRN)
             c.alignment = RGHT; c.number_format = AED; c.border = bdr()
-            c = ws.cell(r, 7, f"=IFERROR(SUM(E$4:E${3+ytd_m})/C{3+ytd_m}*B{r},0)")
+            c = ws.cell(r, 7, f"=IFERROR({ytd_gp_sum}/{ytd_cum_cell}*B{r},0)")
             c.font = bf(color="006100"); c.fill = fill(LIGHT_GRN)
             c.alignment = RGHT; c.number_format = AED; c.border = bdr()
             note = f"○  Forecast: YTD ÷ {int(ytd_wt*100)}% × {int(wt*100)}%"
@@ -220,6 +223,15 @@ def build_seasonality(ws, today_str, ag_rows):
         c.font = hf(9); c.fill = fill(DARK_BLUE); c.alignment = RGHT
         c.number_format = fmt; c.border = bdr()
     ws.cell(tr, 8, "").border = bdr()
+
+    # Row 17 – YTD cumulative factor label + live value (C17 = used by all analysis sheets)
+    # C16 = sum of monthly weights up to current YTD month — this is the key cell
+    # We store it in C16 by using the cumulative formula for the YTD month row
+    # Make sure Seasonality!$C$16 = cumulative factor for current month
+    # Override C16 (TOTAL row col C) with the live YTD cumulative
+    c = ws.cell(tr, 3, f"=C{3+ytd_m}")   # C16 = live cumulative up to current month
+    c.font = hf(9, bold=True, color="FFFF00"); c.fill = fill(DARK_BLUE)
+    c.alignment = CTR; c.number_format = PCT; c.border = bdr()
 
     # Row 18 – summary note
     ytd_wt_pct = int(ytd_wt * 100)
@@ -408,14 +420,16 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label,
         c.font = Font(name="Arial", size=9, color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
 
-        # EOY TV = YTD_TV ÷ ytd_wt
+        # EOY TV = YTD_TV ÷ Seasonality!YTD_factor × (1 + TV_Chg%)
+        # Seasonality!C16 holds the cumulative YTD factor (sum of weights up to current month)
+        SEAS_FACTOR = "Seasonality!$C$16"
         tv_l  = gl(tv_col); gp_l = gl(gp_col); gpp_l = gl(gpp_col)
         adj_l = gl(adj_col); tvc_l = gl(tvc_col)
         eov_l = gl(eov_col); eog_l = gl(eog_col); eop_l = gl(eopc)
         adjgp_l = gl(adj_gp)
 
         c = ws.cell(r, eov_col,
-            f"=IFERROR({tv_l}{r}/IF({ytd_wt}=0,1,{ytd_wt})*(1+{tvc_l}{r}),0)")
+            f"=IFERROR({tv_l}{r}/IF({SEAS_FACTOR}=0,1,{SEAS_FACTOR})*(1+{tvc_l}{r}),0)")
         c.font = bf(bold=True, color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
@@ -585,6 +599,7 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
     ytd_tv = sum(r["tv"] for r in ag_rows)
     ytd_gp = sum(r["gp"] for r in ag_rows)
     gp_pct = ytd_gp / ytd_tv if ytd_tv else 0
+    # EOY uses Seasonality!C16 live reference — these are just for the banner display
     eoy_tv = ytd_tv / ytd_wt if ytd_wt else 0
     eoy_gp = ytd_gp / ytd_wt if ytd_wt else 0
 
