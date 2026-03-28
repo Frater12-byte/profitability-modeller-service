@@ -5,6 +5,126 @@ from openpyxl.utils import get_column_letter
 
 app = Flask(__name__)
 
+DARK_BLUE="1F3864"; MID_BLUE="2E5FA3"; LIGHT_BLUE="BDD7EE"; PALE_BLUE="DEEAF1"
+GOLD="FFF2CC"; GRN_HDR="375623"; LIGHT_GRN="E2EFDA"; WHITE="FFFFFF"
+LIGHT_GREY="F2F2F2"; DARK_GREY="595959"
+
+def fill(h): return PatternFill("solid", fgColor=h)
+def hf(sz=10,bold=True,color=WHITE): return Font(name="Arial",size=sz,bold=bold,color=color)
+def bf(sz=9,bold=False,color="000000"): return Font(name="Arial",size=sz,bold=bold,color=color)
+def bdr():
+    s=Side(style="thin",color="BFBFBF")
+    return Border(left=s,right=s,top=s,bottom=s)
+CTR=Alignment(horizontal="center",vertical="center",wrap_text=True)
+LEFT=Alignment(horizontal="left",vertical="center")
+RGHT=Alignment(horizontal="right",vertical="center")
+
+def safe(v):
+    if v is None or v in ('#VALUE!','#REF!','#N/A'): return None
+    if isinstance(v, datetime.datetime): return None
+    return float(v) if isinstance(v,(int,float)) else None
+
+def load_d1(wb):
+    ws=wb.active; rows=[]; cur=None
+    for r in range(2,ws.max_row+1):
+        ag=ws.cell(r,1).value; cu=ws.cell(r,2).value
+        if ag: cur=ag
+        if not cu: continue
+        row=dict(agency=cur,customer=cu,
+                 gp=safe(ws.cell(r,10).value),gp_py=safe(ws.cell(r,11).value),
+                 gp_pct=safe(ws.cell(r,12).value),rnts=safe(ws.cell(r,15).value),
+                 bookings=safe(ws.cell(r,18).value))
+        if cu=='Total': rows.append({**row,'type':'agency'})
+        else: rows.append({**row,'type':'customer'})
+    return [r for r in rows if r['type']=='agency'], [r for r in rows if r['type']=='customer']
+
+def load_d2(wb):
+    ws=wb.active; rows=[]
+    for r in range(2,ws.max_row+1):
+        co=ws.cell(r,1).value
+        if not co: continue
+        rows.append(dict(country=co,gp=safe(ws.cell(r,9).value),
+                         gp_py=safe(ws.cell(r,10).value),gp_pct=safe(ws.cell(r,11).value),
+                         rnts=safe(ws.cell(r,14).value),bookings=safe(ws.cell(r,17).value)))
+    return rows
+
+def rebuild(d1_bytes, d2_bytes):
+    wb1=openpyxl.load_workbook(io.BytesIO(d1_bytes),data_only=True)
+    wb2=openpyxl.load_workbook(io.BytesIO(d2_bytes),data_only=True)
+    ag_rows,cu_rows=load_d1(wb1)
+    de_rows=load_d2(wb2)
+    today=datetime.date.today().strftime("%d %b %Y")
+    wb=openpyxl.Workbook()
+    ss=wb.active; ss.title="Seasonality"
+    out=io.BytesIO(); wb.save(out); out.seek(0)
+    return out.read()
+
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({'status':'ok','service':'profitability-modeller'})
+
+@app.route('/rebuild', methods=['POST'])
+def rebuild_endpoint():
+    try:
+        body=request.get_json()
+        d1_bytes=base64.b64decode(body['data1_b64'])
+        d2_bytes=base64.b64decode(body['data2_b64'])
+        result_bytes=rebuild(d1_bytes, d2_bytes)
+        return jsonify({'modeller_b64': base64.b64encode(result_bytes).decode(), 'status':'ok'})
+    except Exception as e:
+        return jsonify({'error':str(e)}), 500
+
+@app.route('/refresh-from-sharepoint', methods=['POST'])
+def refresh_from_sharepoint():
+    import requests as req_lib
+    try:
+        body = request.get_json()
+        token = body.get('access_token')
+        host = body.get('sharepoint_host', 'elevatedmc-my.sharepoint.com')
+        headers = {'Authorization': f'Bearer {token}', 'Accept': 'application/octet-stream'}
+        folder = '/personal/francesco_terragni_elevatedmc_com/Documents/Profitability%20Modeller'
+
+        def dl(fname):
+            url = f"https://{host}/personal/francesco_terragni_elevatedmc_com/_api/web/getfilebyserverrelativeurl('{folder}/{fname}')/$value"
+            r = req_lib.get(url, headers=headers, timeout=60)
+            r.raise_for_status()
+            return r.content
+
+        d1 = dl('data_1.xlsx')
+        d2 = dl('data_2.xlsx')
+        result = rebuild(d1, d2)
+
+        ctx_r = req_lib.post(
+            f'https://{host}/personal/francesco_terragni_elevatedmc_com/_api/contextinfo',
+            headers={'Authorization': f'Bearer {token}', 'Accept': 'application/json;odata=verbose'}
+        )
+        digest = ctx_r.json()['d']['GetContextWebInformation']['FormDigestValue']
+
+        up = req_lib.post(
+            f"https://{host}/personal/francesco_terragni_elevatedmc_com/_api/web/getfolderbyserverrelativeurl('{folder}')/files/add(url='Profitability_Modeller_2026.xlsx',overwrite=true)",
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Accept': 'application/json;odata=verbose',
+                'X-RequestDigest': digest,
+                'Content-Type': 'application/octet-stream'
+            },
+            data=result,
+            timeout=120
+        )
+        up.raise_for_status()
+        return jsonify({'status': 'ok', 'upload_status': up.status_code})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+if __name__=='__main__':
+    port=int(os.environ.get('PORT',8080))
+    app.run(host='0.0.0.0', port=port)from flask import Flask, request, jsonify
+import base64, io, os, datetime, openpyxl
+from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
+
+app = Flask(__name__)
+
 # ── colours ───────────────────────────────────────────────────────────────────
 DARK_BLUE="1F3864"; MID_BLUE="2E5FA3"; LIGHT_BLUE="BDD7EE"; PALE_BLUE="DEEAF1"
 GOLD="FFF2CC"; GRN_HDR="375623"; LIGHT_GRN="E2EFDA"; WHITE="FFFFFF"
