@@ -9,7 +9,12 @@ app = Flask(__name__)
 DARK_BLUE = "1F3864"; MID_BLUE  = "2E5FA3"; LIGHT_BLUE = "BDD7EE"
 PALE_BLUE = "DEEAF1"; GOLD      = "FFF2CC"; GRN_HDR    = "375623"
 LIGHT_GRN = "E2EFDA"; WHITE     = "FFFFFF"; LIGHT_GREY = "F2F2F2"
-DARK_GREY = "595959"; NAVY      = "1F3864"
+DARK_GREY  = "595959"; NAVY       = "1F3864"
+BRIGHT_GRN = "00B050"   # GP Delta positive — bright green
+OPS_DAILY  = "FCE4D6"   # salmon-orange — daily ops
+OPS_WEEKLY = "DDEBF7"   # light blue    — weekly ops
+OPS_MONTHLY= "E2EFDA"   # light green   — monthly ops
+INSIGHT_BG = "7030A0"   # purple        — opportunity insight header
 
 def fill(h): return PatternFill("solid", fgColor=h)
 def hf(sz=10, bold=True, color=WHITE): return Font(name="Arial", size=sz, bold=bold, color=color)
@@ -24,7 +29,7 @@ RGHT = Alignment(horizontal="right",  vertical="center")
 
 AED      = '#,##0;(#,##0);"-"'
 PCT      = '0.0%;(0.0%);"-"'
-GP_DELTA = '[Green]+#,##0;[Red]-#,##0;"-"'
+GP_DELTA = '[Color10]+#,##0;[Red]-#,##0;"-"'   # bright green positive / red negative
 gl = get_column_letter
 
 
@@ -76,11 +81,18 @@ def load_d1(xlsx_bytes):
         gp = _num(row[9])
         if cu == 'Total':
             agencies[cur_agency] = dict(agency=cur_agency, tv=tv, gp=gp)
+            # Also add as a bold "subtotal" customer row for the Customer tab
+            customers.append(dict(agency=cur_agency, customer=f"── {cur_agency} TOTAL ──",
+                                  tv=tv, gp=gp, is_total=True))
         else:
             if tv > 0 or gp != 0:
-                customers.append(dict(agency=cur_agency, customer=cu, tv=tv, gp=gp))
+                customers.append(dict(agency=cur_agency, customer=cu, tv=tv, gp=gp, is_total=False))
     ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
-    cu_list = sorted(customers, key=lambda x: (x['agency'], -x['gp']))
+    # Sort customers by TV descending (not grouped by agency)
+    cu_list = sorted([r for r in customers if not r.get('is_total')],
+                     key=lambda x: -x['tv'])
+    # Append agency totals at the bottom of each agency group — actually just sort all by TV
+    # User asked: rank customers by sales volume
     return ag_list, cu_list
 
 
@@ -279,13 +291,16 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
 
     # ── Rows 8+: data ────────────────────────────────────────────────────────
     for ri, row in enumerate(rows):
-        r  = DATA_START + ri
-        bg = PALE_BLUE if ri % 2 == 0 else WHITE
+        r   = DATA_START + ri
+        is_tot = row.get("is_total", False)
+        bg  = "D9E1F2" if is_tot else (PALE_BLUE if ri % 2 == 0 else WHITE)
+        row_font = bf(bold=True) if is_tot else bf()
+        bold_font_val = bf(bold=True) if is_tot else bf(bold=True)  # name always bold
 
         col = 1
         if agency_key:
             c = ws.cell(r, col, row.get(agency_key, ""))
-            c.font = bf(); c.alignment = LEFT; c.fill = fill(bg); c.border = bdr(); col += 1
+            c.font = row_font; c.alignment = LEFT; c.fill = fill(bg); c.border = bdr(); col += 1
         c = ws.cell(r, col, row.get(id_key, ""))
         c.font = bf(bold=True); c.alignment = LEFT; c.fill = fill(bg); c.border = bdr()
 
@@ -367,17 +382,17 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     c = ws.cell(nr, 1,
         "YTD TV and GP are data inputs.  "
         "EOY Base GP = YTD_TV \u00f7 YTD_seasonality_factor \u00d7 GP%.  "
-        "TV Chg% adjusts EOY TV volume AND base GP proportionally.  "
+        "TV Chg% adjusts EOY TV volume (and base GP proportionally).  "
         "GP% Adj is in PERCENTAGE POINTS added to current GP%: "
         "e.g. GP%=2.8%, GP%Adj=0.2% \u2192 adjusted margin=3.0% (+0.2pp).  "
         "Adj. EOY GP = EOY_TV(with TV Chg%) \u00d7 (GP% + GP%Adj).  "
-        "GP Delta = Adj GP \u2212 Base GP  (reflects both volume and margin changes).")
+        "GP Delta = Adj GP \u2212 Base GP (reflects both volume and margin changes).")
     c.font = bf(sz=8,color=DARK_GREY); c.alignment = LEFT
     ws.row_dimensions[nr].height = 14
 
-    # ── Opportunity Insights (tab-specific) ──────────────────────────────────
-    tv_total = sum(r["tv"] for r in rows)
-    gp_total = sum(r["gp"] for r in rows)
+    # ── Opportunity Insights (tab-specific, purple header) ───────────────────
+    tv_total   = sum(r["tv"] for r in rows)
+    gp_total   = sum(r["gp"] for r in rows)
     avg_gp_pct = gp_total / tv_total if tv_total else 0
 
     ir = nr + 2
@@ -385,18 +400,23 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     c = ws.cell(ir, 1,
         f"  \u2605  OPPORTUNITY INSIGHTS  \u2014  Where managers can act  "
         f"|  Avg GP% for this view: {avg_gp_pct*100:.1f}%")
-    c.font = hf(10); c.fill = fill(NAVY); c.alignment = LEFT
+    c.font = hf(10); c.fill = fill(INSIGHT_BG); c.alignment = LEFT
     ws.row_dimensions[ir].height = 20
 
+    # Panel headers (purple shades)
+    PANEL_A_CLR = "9B2DC9";  PANEL_B_CLR = "C00000";  PANEL_C_CLR = "375623"
     ir2 = ir + 1
     desc_data = [
-        (1, 3,     "A \u2014 Improve Margin",  "Large TV but below-avg GP%. Raising margin to avg = biggest GP gain."),
-        (4, 6,     "B \u2014 Grow Volume",     "Above-avg margin but low volume. Growing TV = high ROI."),
-        (7, N_COLS,"C \u2014 Biggest GP Gap",  "Largest absolute GP shortfall vs what avg margin would generate."),
+        (1, 3,      "A \u2014 Improve Margin", PANEL_A_CLR,
+         "Large TV but below-avg GP%. Raising GP% to avg = biggest absolute gain."),
+        (4, 6,      "B \u2014 Grow Volume",    PANEL_B_CLR,
+         "Above-avg GP%, low volume. Investing in TV growth = high ROI per AED spent."),
+        (7, N_COLS, "C \u2014 Biggest GP Gap", PANEL_C_CLR,
+         "Largest absolute gap between current GP and what the avg margin would generate."),
     ]
-    for c1, c2, hdr, desc in desc_data:
-        ws.merge_cells(start_row=ir2, start_column=c1, end_row=ir2, end_column=c2)
-        c = ws.cell(ir2, c1, hdr); c.font = hf(9); c.fill = fill(MID_BLUE); c.alignment = CTR
+    for c1, c2, hdr, clr, desc in desc_data:
+        ws.merge_cells(start_row=ir2,   start_column=c1, end_row=ir2,   end_column=c2)
+        c = ws.cell(ir2, c1, hdr); c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
         ws.merge_cells(start_row=ir2+1, start_column=c1, end_row=ir2+1, end_column=c2)
         c = ws.cell(ir2+1, c1, desc); c.font = bf(sz=8,color=DARK_GREY); c.alignment = LEFT
     ws.row_dimensions[ir2].height = 18; ws.row_dimensions[ir2+1].height = 14
@@ -404,9 +424,11 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     ir3 = ir2 + 2
     for ci, h in enumerate(["Name","YTD TV","GP%","Opportunity",
                               "Name","YTD TV","GP%",
-                              "Name","YTD TV","GP%","Opportunity"],1):
+                              "Name","YTD TV","GP%","Opportunity"], 1):
         if ci <= N_COLS:
-            c = ws.cell(ir3, ci, h); c.font = hf(9); c.fill = fill(MID_BLUE); c.alignment = CTR; c.border = bdr()
+            c = ws.cell(ir3, ci, h)
+            clr = PANEL_A_CLR if ci <= 4 else (PANEL_B_CLR if ci <= 7 else PANEL_C_CLR)
+            c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
     ws.row_dimensions[ir3].height = 18
 
     data_rows_with_tv = [r for r in rows if r["tv"] > 0]
@@ -440,6 +462,53 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
                     c = ws.cell(pr,ci,val); c.font=bf(sz=8); c.fill=fill(bg); c.border=bdr()
                     if fmt: c.number_format=fmt
         ws.row_dimensions[pr].height = 14
+
+    # ── Operational Cadence ───────────────────────────────────────────────────
+    ops_start = ir3 + 1 + max(len(panel_a), len(panel_b), len(panel_c)) + 2
+
+    ws.merge_cells(start_row=ops_start, start_column=1, end_row=ops_start, end_column=N_COLS)
+    c = ws.cell(ops_start, 1, "  \u23f1  OPERATIONAL CADENCE  \u2014  Recommended actions by frequency")
+    c.font = hf(10); c.fill = fill(INSIGHT_BG); c.alignment = LEFT
+    ws.row_dimensions[ops_start].height = 20
+
+    ops_sections = [
+        ("DAILY", OPS_DAILY, [
+            "Check prior-day bookings vs daily run-rate target  (Total TV \u00f7 working days remaining)",
+            "Flag any agency / customer below 80% of their daily pace",
+            "Review new GP% on confirmed bookings — escalate if below floor margin",
+            "Update GP% Adj inputs for any accounts with fresh pricing changes",
+        ]),
+        ("WEEKLY", OPS_WEEKLY, [
+            "Compare YTD TV and GP vs prior week — calculate weekly growth rate",
+            "Run Opportunity Panel A: identify accounts drifting below avg GP% for margin coaching",
+            "Run Opportunity Panel B: contact high-margin low-volume accounts with volume incentives",
+            "Review Seasonality weights — adjust monthly targets if booking patterns shift",
+            "Export updated modeller from Drive and share with team / stakeholders",
+        ]),
+        ("MONTHLY", OPS_MONTHLY, [
+            "Full reconciliation: YTD actual vs EOY forecast — update TV Chg% inputs",
+            "Refresh data_1.xlsx and data_2.xlsx from PowerBI and drop into Drive folder",
+            "Review GP Delta column — accounts with negative delta need action plans",
+            "Update seasonality completed months (actual TV/GP in Seasonality tab)",
+            "Run Panel C: GP Gap analysis — build targeted recovery plans for top 5 accounts",
+            "Board / management report: pull Dashboard KPIs for monthly review pack",
+        ]),
+    ]
+
+    r_ops = ops_start + 1
+    for period, clr, actions in ops_sections:
+        ws.merge_cells(start_row=r_ops, start_column=1, end_row=r_ops, end_column=N_COLS)
+        c = ws.cell(r_ops, 1, f"  {period}")
+        c.font = bf(sz=9,bold=True,color="000000"); c.fill = fill(clr); c.alignment = LEFT; c.border = bdr()
+        ws.row_dimensions[r_ops].height = 16
+        r_ops += 1
+        for action in actions:
+            ws.merge_cells(start_row=r_ops, start_column=1, end_row=r_ops, end_column=N_COLS)
+            c = ws.cell(r_ops, 1, f"    \u2022  {action}")
+            c.font = bf(sz=8); c.fill = fill(clr); c.alignment = LEFT
+            ws.row_dimensions[r_ops].height = 14
+            r_ops += 1
+        r_ops += 1  # spacer between sections
 
     # Column widths
     widths = [16,28,14,14,9,9,9,16,14,9,14,14] if agency_key else [28,14,14,9,9,9,16,14,9,14,14]
