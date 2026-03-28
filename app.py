@@ -276,7 +276,7 @@ def _kpi_banner(ws, ytd_tv, ytd_gp, ytd_wt):
 
 
 def build_analysis_sheet(ws, title, rows, id_key, id_label,
-                          agency_key=None, ytd_wt=0.27, today_str=""):
+                          agency_key=None, ytd_wt=0.27, today_str="", seas_row=6):
     """
     Builds Agency Groups / Customer / Destination analysis tab.
     Matches the real modeller layout exactly:
@@ -421,8 +421,8 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label,
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
 
         # EOY TV = YTD_TV ÷ Seasonality!YTD_factor × (1 + TV_Chg%)
-        # Seasonality!C16 holds the cumulative YTD factor (sum of weights up to current month)
-        SEAS_FACTOR = "Seasonality!$C$16"
+        # C{3+ytd_m} = cumulative weight up to current YTD month (e.g. C6=Mar=27%)
+        SEAS_FACTOR = f"Seasonality!$C${seas_row}"
         tv_l  = gl(tv_col); gp_l = gl(gp_col); gpp_l = gl(gpp_col)
         adj_l = gl(adj_col); tvc_l = gl(tvc_col)
         eov_l = gl(eov_col); eog_l = gl(eog_col); eop_l = gl(eopc)
@@ -657,7 +657,7 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
     c.font = hf(10); c.fill = fill(DARK_BLUE); c.alignment = CTR
     ws.row_dimensions[11].height = 20
 
-    top_hdrs = ["Agency Group","YTD TV (AED)","YTD GP (AED)","YTD GP%","EOY TV","EOY GP"]
+    top_hdrs = ["Agency Group","YTD TV (AED)","YTD GP (AED)","YTD GP%","EOY TV","EOY GP","EOY GP%"]
     for ci, h in enumerate(top_hdrs, 1):
         c = ws.cell(12, ci, h)
         c.font = hf(9); c.fill = fill(MID_BLUE); c.alignment = CTR; c.border = bdr()
@@ -669,9 +669,10 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
         bg = PALE_BLUE if ri % 2 == 0 else WHITE
         eoy_tv_row = (row["tv"] / ytd_wt) if ytd_wt else 0
         eoy_gp_row = (row["gp"] / ytd_wt) if ytd_wt else 0
+        gp_pct_row = row["gp"] / row["tv"] if row["tv"] else 0
         for ci, (val, fmt) in enumerate([
             (row["agency"], None),(row["tv"], AED),(row["gp"], AED),
-            (row["gp_pct"], PCT),(eoy_tv_row, AED),(eoy_gp_row, AED)
+            (gp_pct_row, PCT),(eoy_tv_row, AED),(eoy_gp_row, AED),(gp_pct_row, PCT)
         ], 1):
             c = ws.cell(r, ci, val)
             c.font = bf(); c.fill = fill(bg); c.border = bdr()
@@ -679,12 +680,12 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
             c.alignment = RGHT if fmt else LEFT
         ws.row_dimensions[r].height = 16
 
-    # Top-5 destinations table (cols H–M)
-    ws.merge_cells("H11:M11")
+    # Top-5 destinations table (cols H–M, matching agency table structure)
+    ws.merge_cells("H11:N11")
     c = ws.cell(11, 8, "TOP DESTINATIONS  —  YTD Performance")
     c.font = hf(10); c.fill = fill(DARK_BLUE); c.alignment = CTR
 
-    top_hdrs2 = ["Country","YTD TV (AED)","YTD GP (AED)","YTD GP%","EOY TV","EOY GP"]
+    top_hdrs2 = ["Country","YTD TV (AED)","YTD GP (AED)","YTD GP%","EOY TV","EOY GP","EOY GP%"]
     for ci, h in enumerate(top_hdrs2, 1):
         c = ws.cell(12, 7+ci, h)
         c.font = hf(9); c.fill = fill(MID_BLUE); c.alignment = CTR; c.border = bdr()
@@ -695,9 +696,10 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
         bg = PALE_BLUE if ri % 2 == 0 else WHITE
         eoy_tv_row = (row["tv"] / ytd_wt) if ytd_wt else 0
         eoy_gp_row = (row["gp"] / ytd_wt) if ytd_wt else 0
+        gp_pct_row = row["gp"] / row["tv"] if row["tv"] else 0
         for ci, (val, fmt) in enumerate([
             (row["country"], None),(row["tv"], AED),(row["gp"], AED),
-            (row["gp_pct"], PCT),(eoy_tv_row, AED),(eoy_gp_row, AED)
+            (gp_pct_row, PCT),(eoy_tv_row, AED),(eoy_gp_row, AED),(gp_pct_row, PCT)
         ], 1):
             c = ws.cell(r, 7+ci, val)
             c.font = bf(); c.fill = fill(bg); c.border = bdr()
@@ -732,17 +734,29 @@ def rebuild(d1_bytes, d2_bytes):
     cu = wb.create_sheet("Customer")
     de = wb.create_sheet("Destination")
 
+    # seas_row = Seasonality sheet row with cumulative YTD weight (e.g. row 6 = March = 27%)
+    # Row formula: month i is in row 3+i, so March (i=3) is row 6
+    seas_row = 3 + ytd_m
+
+    # Compute GP% from TV/GP (don't trust raw GP% column which has corrupt values)
+    for r in ag_rows:
+        r["gp_pct"] = r["gp"] / r["tv"] if r["tv"] else 0
+    for r in cu_rows:
+        r["gp_pct"] = r["gp"] / r["tv"] if r["tv"] else 0
+    for r in de_rows:
+        r["gp_pct"] = r["gp"] / r["tv"] if r["tv"] else 0
+
     build_dashboard(db, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt)
     build_seasonality(ss, today_str, ag_rows)
     build_analysis_sheet(ag, "AGENCY GROUPS ANALYSIS", ag_rows,
                          id_key="agency", id_label="Agency Group",
-                         ytd_wt=ytd_wt, today_str=today_str)
+                         ytd_wt=ytd_wt, today_str=today_str, seas_row=seas_row)
     build_analysis_sheet(cu, "CUSTOMER ANALYSIS", cu_rows,
                          id_key="customer", id_label="Customer",
-                         agency_key="agency", ytd_wt=ytd_wt, today_str=today_str)
+                         agency_key="agency", ytd_wt=ytd_wt, today_str=today_str, seas_row=seas_row)
     build_analysis_sheet(de, "DESTINATION ANALYSIS", de_rows,
                          id_key="country", id_label="Country",
-                         ytd_wt=ytd_wt, today_str=today_str)
+                         ytd_wt=ytd_wt, today_str=today_str, seas_row=seas_row)
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out.read()
