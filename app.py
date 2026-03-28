@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify
-import base64, io, os, datetime, openpyxl
+import base64, io, os, datetime, openpyxl, zipfile, re
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
 from openpyxl.utils import get_column_letter
 
@@ -46,71 +46,106 @@ def safe(v):
     return float(v) if isinstance(v, (int, float)) else None
 
 
-# ── data loaders ──────────────────────────────────────────────────────────────
-def load_d1(wb):
-    """data_1: Agency Group / Customer breakdown.
-       Cols (1-based): 1=AgencyGroup, 2=Customer, 3=Sales(TV), 10=GP, 12=GP%, 15=RNTs, 18=Bookings
+# ── XML-direct data loaders (bypass openpyxl date-serial misinterpretation) ───
+def _parse_xlsx_rows(xlsx_bytes):
     """
-    ws = wb.active
-    agencies = {}   # {name: {tv, gp, gp_pct}}
-    customers = []  # [{agency, customer, tv, gp, gp_pct}]
+    Read an xlsx file and return all rows as lists of Python values.
+    Reads raw numeric <x:v> values directly from XML — avoids openpyxl
+    misinterpreting large AED amounts as out-of-range dates.
+    """
+    with zipfile.ZipFile(io.BytesIO(xlsx_bytes)) as zf:
+        # Find the worksheet
+        sheets = [n for n in zf.namelist() if 'worksheets/sheet' in n]
+        with zf.open(sheets[0]) as f:
+            content = f.read().decode('utf-8-sig')
+
+    rows_xml = re.findall(r'<x:row>(.*?)</x:row>', content, re.DOTALL)
+    result = []
+    for row_xml in rows_xml:
+        cells = re.findall(r'<x:c([^>]*)>(.*?)</x:c>', row_xml, re.DOTALL)
+        row = []
+        for attrs, inner in cells:
+            inline = re.search(r'<x:is><x:t>(.*?)</x:t></x:is>', inner)
+            v_tag  = re.search(r'<x:v>(.*?)</x:v>', inner)
+            if inline:
+                row.append(inline.group(1))
+            elif v_tag:
+                try:
+                    row.append(float(v_tag.group(1)))
+                except ValueError:
+                    row.append(None)
+            else:
+                row.append(None)
+        result.append(row)
+    return result   # first row = headers
+
+
+def _num(v):
+    """Safely convert to float, returning 0 for None/errors."""
+    if v is None: return 0.0
+    if isinstance(v, (int, float)):
+        return float(v) if v == v else 0.0  # NaN guard
+    return 0.0
+
+
+def load_d1(xlsx_bytes):
+    """
+    data_1: Agency Group / Customer breakdown.
+    Cols (0-based): 0=AgencyGroup, 1=Customer, 2=Sales(TV), 9=GP, 11=GP%
+    Returns (ag_rows, cu_rows).
+    """
+    all_rows = _parse_xlsx_rows(xlsx_bytes)
+    # Skip header row
+    agencies = {}
+    customers = []
     cur_agency = None
 
-    for r in range(2, ws.max_row + 1):
-        ag = ws.cell(r, 1).value
-        cu = ws.cell(r, 2).value
-        if ag:
-            cur_agency = str(ag).strip()
+    for row in all_rows[1:]:
+        # Pad row to avoid index errors
+        while len(row) < 20:
+            row.append(None)
+
+        ag = row[0]
+        cu = row[1]
+        if ag and isinstance(ag, str) and ag.strip():
+            cur_agency = ag.strip()
         if not cu or not cur_agency:
             continue
         cu = str(cu).strip()
-        tv  = safe(ws.cell(r, 3).value)
-        gp  = safe(ws.cell(r, 10).value)
-        gp_pct = safe(ws.cell(r, 12).value)
 
-        if cu == "Total":
-            # Agency-level summary row
-            agencies[cur_agency] = dict(agency=cur_agency, tv=tv or 0, gp=gp or 0, gp_pct=gp_pct or 0)
+        tv = _num(row[2])   # Sales
+        gp = _num(row[9])   # Gross Profit
+
+        if cu == 'Total':
+            agencies[cur_agency] = dict(agency=cur_agency, tv=tv, gp=gp)
         else:
-            if gp is not None or tv is not None:  # skip zero-data rows
-                customers.append(dict(
-                    agency=cur_agency, customer=cu,
-                    tv=tv or 0, gp=gp or 0, gp_pct=gp_pct or 0
-                ))
+            if tv > 0 or gp != 0:
+                customers.append(dict(agency=cur_agency, customer=cu, tv=tv, gp=gp))
 
-    # Sort agencies by TV desc
-    ag_list = sorted(agencies.values(), key=lambda x: -(x["tv"] or 0))
-    # Sort customers by GP desc within agency
-    cu_list = sorted(customers, key=lambda x: (x["agency"], -(x["gp"] or 0)))
+    ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
+    cu_list = sorted(customers, key=lambda x: (x['agency'], -x['gp']))
     return ag_list, cu_list
 
 
-def load_d2(wb):
-    """data_2: Country/Destination breakdown.
-       Cols (1-based): 1=Country, 2=Sales(TV), 9=GP, 11=GP%
+def load_d2(xlsx_bytes):
     """
-    ws = wb.active
+    data_2: Country/Destination breakdown.
+    Cols (0-based): 0=Country, 1=Sales(TV), 8=GP
+    """
+    all_rows = _parse_xlsx_rows(xlsx_bytes)
     rows = []
-    for r in range(2, ws.max_row + 1):
-        co = ws.cell(r, 1).value
-        if not co:
+    for row in all_rows[1:]:
+        while len(row) < 10:
+            row.append(None)
+        co = row[0]
+        if not co or not isinstance(co, str):
             continue
-        co  = str(co).strip()
-        tv  = safe(ws.cell(r, 2).value)
-        gp  = safe(ws.cell(r, 9).value)
-        gp_pct = safe(ws.cell(r, 11).value)
-        if gp is not None or tv is not None:
-            rows.append(dict(country=co, tv=tv or 0, gp=gp or 0, gp_pct=gp_pct or 0))
-
-    return sorted(rows, key=lambda x: -(x["tv"] or 0))
-
-
-# ── determine current YTD month from data ─────────────────────────────────────
-def detect_ytd_months(ag_rows, seasonality_weights):
-    """Return the month index (1-12) of the last month with data."""
-    # Use today as a simple proxy; could be improved with actual data column scan
-    today = datetime.date.today()
-    return today.month
+        co = co.strip()
+        tv = _num(row[1])   # Sales
+        gp = _num(row[8])   # Gross Profit
+        if tv > 0 or gp != 0:
+            rows.append(dict(country=co, tv=tv, gp=gp))
+    return sorted(rows, key=lambda x: -x['tv'])
 
 
 # ── sheet builders ─────────────────────────────────────────────────────────────
@@ -713,11 +748,8 @@ def build_dashboard(ws, today_str, data_month, ag_rows, cu_rows, de_rows, ytd_wt
 
 # ── main rebuild ──────────────────────────────────────────────────────────────
 def rebuild(d1_bytes, d2_bytes):
-    wb1 = openpyxl.load_workbook(io.BytesIO(d1_bytes), data_only=True)
-    wb2 = openpyxl.load_workbook(io.BytesIO(d2_bytes), data_only=True)
-
-    ag_rows, cu_rows = load_d1(wb1)
-    de_rows           = load_d2(wb2)
+    ag_rows, cu_rows = load_d1(d1_bytes)
+    de_rows           = load_d2(d2_bytes)
 
     today      = datetime.date.today()
     today_str  = today.strftime("%d %b %Y")
