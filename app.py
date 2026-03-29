@@ -88,11 +88,8 @@ def load_d1(xlsx_bytes):
             if tv > 0 or gp != 0:
                 customers.append(dict(agency=cur_agency, customer=cu, tv=tv, gp=gp, is_total=False))
     ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
-    # Sort customers by TV descending (not grouped by agency)
     cu_list = sorted([r for r in customers if not r.get('is_total')],
                      key=lambda x: -x['tv'])
-    # Append agency totals at the bottom of each agency group — actually just sort all by TV
-    # User asked: rank customers by sales volume
     return ag_list, cu_list
 
 
@@ -184,7 +181,8 @@ def build_seasonality(ws, ag_rows, ytd_m):
     tr = 16
     c = ws.cell(tr, 1, "TOTAL"); c.font = hf(9); c.fill = fill(DARK_BLUE); c.alignment = LEFT; c.border = bdr()
     c = ws.cell(tr, 2, "=SUM(B4:B15)"); c.font = hf(9); c.fill = fill(DARK_BLUE); c.alignment = CTR; c.number_format = PCT; c.border = bdr()
-    c = ws.cell(tr, 3, f"=C{seas_row}")  # KEY: points to current month's cumulative
+    c = ws.cell(tr, 3, f"=C{seas_row}")  # C16 = live cumulative YTD factor = SUM(B4:B{seas_row-1})
+    # This means: change any weight in col B → C column recalculates → C16 updates → all analysis tab EOY forecasts update
     c.font = hf(9,bold=True,color="FFFF00"); c.fill = fill(DARK_BLUE); c.alignment = CTR; c.number_format = PCT; c.border = bdr()
     for ci, fmt in [(4,AED),(5,AED),(6,AED),(7,AED)]:
         c = ws.cell(tr, ci, f"=SUM({gl(ci)}4:{gl(ci)}15)")
@@ -335,13 +333,16 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c.font = Font(name="Arial",size=9,color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
 
-        # EOY TV = YTD_TV x (1 + TV_Chg%) / YTD_seasonality_factor
+        # EOY TV = YTD_TV x (1 + TV_Chg%) / Seasonality_YTD_factor
+        # Seasonality!$C$16 = =C{seas_row} = SUM($B$4:B{seas_row-1}) = cumulative weight up to current month
+        # Changing ANY weight in Seasonality col B auto-updates C column → C16 → all EOY here
         c = ws.cell(r, eov_col,
             f"=IFERROR({tv_l}{r}*(1+{tvc_l}{r})/IF({SEAS}=0,1,{SEAS}),0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP (Base) = YTD_TV / YTD_factor x GP%  (no TV Chg, no GP% Adj)
+        # EOY GP (Base) = YTD_TV / YTD_seasonality_factor x GP%
+        # Same Seasonality link — weight changes flow here too
         c = ws.cell(r, eog_col,
             f"=IFERROR({tv_l}{r}/IF({SEAS}=0,1,{SEAS})*{gpp_l}{r},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
@@ -572,22 +573,23 @@ def build_dashboard(ws, today_str, data_month, ag_rows, de_rows, ytd_wt):
 
     ws.row_dimensions[2].height = 8
 
-    # Rows 3-4: KPI banner
+    # Rows 3-4: KPI banner — label row coloured bg/white text, value row white bg/coloured text
     kpi_specs = [
-        ("YTD Total Value",   ytd_tv,  AED, MID_BLUE),
-        ("YTD Gross Profit",  ytd_gp,  AED, MID_BLUE),
-        ("YTD GP%",           gp_pct,  PCT, MID_BLUE),
-        ("EOY TV Forecast",   eoy_tv,  AED, GRN_HDR),
-        ("EOY GP Forecast",   eoy_gp,  AED, GRN_HDR),
-        ("EOY GP% Forecast",  gp_pct,  PCT, GRN_HDR),
+        ("YTD Total Value",   ytd_tv,  AED, MID_BLUE,  "1F3864"),
+        ("YTD Gross Profit",  ytd_gp,  AED, MID_BLUE,  "1F3864"),
+        ("YTD GP%",           gp_pct,  PCT, MID_BLUE,  "1F3864"),
+        ("EOY TV Forecast",   eoy_tv,  AED, GRN_HDR,   "375623"),
+        ("EOY GP Forecast",   eoy_gp,  AED, GRN_HDR,   "375623"),
+        ("EOY GP% Forecast",  gp_pct,  PCT, GRN_HDR,   "375623"),
     ]
     col = 1
-    for label, val, fmt, clr in kpi_specs:
+    for label, val, fmt, bg_clr, val_clr in kpi_specs:
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col+2)
-        c = ws.cell(3, col, label); c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
+        c = ws.cell(3, col, label); c.font = hf(9); c.fill = fill(bg_clr); c.alignment = CTR; c.border = bdr()
         ws.merge_cells(start_row=4, start_column=col, end_row=4, end_column=col+2)
-        c = ws.cell(4, col, val); c.font = hf(12,bold=True); c.fill = fill(WHITE)
-        c.alignment = RGHT; c.number_format = fmt; c.border = bdr()
+        c = ws.cell(4, col, val)
+        c.font = Font(name="Arial", size=12, bold=True, color=val_clr)
+        c.fill = fill(WHITE); c.alignment = RGHT; c.number_format = fmt; c.border = bdr()
         col += 3
     ws.row_dimensions[3].height = 20; ws.row_dimensions[4].height = 28
 
