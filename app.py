@@ -269,7 +269,12 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     ws.row_dimensions[5].height = 28
 
     # ── Row 6: colour bands ──────────────────────────────────────────────────
-    bands = [(n_id,"",DARK_BLUE),(2,"◀  YTD ACTUALS",MID_BLUE),
+    # Columns after identity cols:
+    #   YTD ACTUALS    = TV + GP + GP%          = 3 cols
+    #   SCENARIO INPUTS = GP%Adj + TVChg%        = 2 cols
+    #   EOY BASE FCST  = EOY_TV + EOY_GP + EOY_GP% = 3 cols
+    #   ADJUSTED FCST  = Adj_GP + Delta          = 2 cols
+    bands = [(n_id,"",DARK_BLUE),(3,"◀  YTD ACTUALS",MID_BLUE),
              (2,"✏  SCENARIO INPUTS","7F3F00"),(3,"▶  EOY BASE FCST",GRN_HDR),
              (2,"★  ADJUSTED FCST","375E23")]
     col = 1
