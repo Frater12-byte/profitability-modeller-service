@@ -239,22 +239,26 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     adjgp_l = gl(adjgp_col)
     SEAS    = "Seasonality!$C$16"  # C16 = live YTD cumulative factor
 
-    # ── KPI banner (rows 1-2) ────────────────────────────────────────────────
+    # ── KPI banner (rows 1-2) — 2 cols each, 12 cols total ──────────────────
+    # Label row: coloured background, white text
+    # Value row: white background, coloured text (visible!)
     kpis = [
-        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",   AED, MID_BLUE, 3),
-        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",   AED, MID_BLUE, 3),
-        ("YTD GP%",           f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)", PCT, MID_BLUE, 3),
-        ("EOY TV (Base)",     f"=SUM({eov_l}{DATA_START}:{eov_l}{DATA_END})",  AED, GRN_HDR, 3),
-        ("EOY GP (Base)",     f"=SUM({eog_l}{DATA_START}:{eog_l}{DATA_END})",  AED, GRN_HDR, 3),
-        ("EOY GP (Adjusted)", f"=SUM({adjgp_l}{DATA_START}:{adjgp_l}{DATA_END})", AED, "7F3F00", 3),
+        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
+        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
+        ("YTD GP%",           f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)", PCT, MID_BLUE, "1F3864", 2),
+        ("EOY TV (Base)",     f"=SUM({eov_l}{DATA_START}:{eov_l}{DATA_END})",  AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Base)",     f"=SUM({eog_l}{DATA_START}:{eog_l}{DATA_END})",  AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Adjusted)", f"=SUM({adjgp_l}{DATA_START}:{adjgp_l}{DATA_END})", AED, "7F3F00", "7F3F00", 2),
     ]
     col = 1
-    for label, formula, fmt, clr, span in kpis:
+    for label, formula, fmt, bg_clr, val_clr, span in kpis:
         ws.merge_cells(start_row=1, start_column=col, end_row=1, end_column=col+span-1)
-        c = ws.cell(1, col, label); c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
+        c = ws.cell(1, col, label)
+        c.font = hf(9); c.fill = fill(bg_clr); c.alignment = CTR; c.border = bdr()
         ws.merge_cells(start_row=2, start_column=col, end_row=2, end_column=col+span-1)
-        c = ws.cell(2, col, formula); c.font = hf(11,bold=True); c.fill = fill(WHITE)
-        c.alignment = RGHT; c.number_format = fmt; c.border = bdr()
+        c = ws.cell(2, col, formula)
+        c.font = Font(name="Arial", size=11, bold=True, color=val_clr)
+        c.fill = fill(WHITE); c.alignment = RGHT; c.number_format = fmt; c.border = bdr()
         col += span
     ws.row_dimensions[1].height = 20; ws.row_dimensions[2].height = 26
     for r in [3,4]: ws.row_dimensions[r].height = 6
@@ -395,6 +399,10 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     gp_total   = sum(r["gp"] for r in rows)
     avg_gp_pct = gp_total / tv_total if tv_total else 0
 
+    PANEL_A_CLR = "9B2DC9"   # purple  – Improve Margin
+    PANEL_B_CLR = "C00000"   # dark red – Grow Volume
+    PANEL_C_CLR = "375623"   # dark green – Biggest GP Gap
+
     ir = nr + 2
     ws.merge_cells(start_row=ir, start_column=1, end_row=ir, end_column=N_COLS)
     c = ws.cell(ir, 1,
@@ -403,15 +411,20 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     c.font = hf(10); c.fill = fill(INSIGHT_BG); c.alignment = LEFT
     ws.row_dimensions[ir].height = 20
 
-    # Panel headers (purple shades)
-    PANEL_A_CLR = "9B2DC9";  PANEL_B_CLR = "C00000";  PANEL_C_CLR = "375623"
+    # Panel headers — 3 equal panels, each exactly PANEL_W columns wide
+    # Use floor division to get equal thirds, give remainder to last panel
+    PANEL_W = N_COLS // 3
+    p1_end  = PANEL_W
+    p2_end  = PANEL_W * 2
+    p3_end  = N_COLS   # last panel gets any remainder too
+
     ir2 = ir + 1
     desc_data = [
-        (1, 3,      "A \u2014 Improve Margin", PANEL_A_CLR,
+        (1,      p1_end, "A \u2014 Improve Margin", PANEL_A_CLR,
          "Large TV but below-avg GP%. Raising GP% to avg = biggest absolute gain."),
-        (4, 6,      "B \u2014 Grow Volume",    PANEL_B_CLR,
-         "Above-avg GP%, low volume. Investing in TV growth = high ROI per AED spent."),
-        (7, N_COLS, "C \u2014 Biggest GP Gap", PANEL_C_CLR,
+        (p1_end+1, p2_end, "B \u2014 Grow Volume",    PANEL_B_CLR,
+         "Above-avg GP%, low volume. Growing TV = high ROI per AED spent."),
+        (p2_end+1, p3_end, "C \u2014 Biggest GP Gap", PANEL_C_CLR,
          "Largest absolute gap between current GP and what the avg margin would generate."),
     ]
     for c1, c2, hdr, clr, desc in desc_data:
@@ -422,13 +435,18 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     ws.row_dimensions[ir2].height = 18; ws.row_dimensions[ir2+1].height = 14
 
     ir3 = ir2 + 2
-    for ci, h in enumerate(["Name","YTD TV","GP%","Opportunity",
-                              "Name","YTD TV","GP%",
-                              "Name","YTD TV","GP%","Opportunity"], 1):
-        if ci <= N_COLS:
-            c = ws.cell(ir3, ci, h)
-            clr = PANEL_A_CLR if ci <= 4 else (PANEL_B_CLR if ci <= 7 else PANEL_C_CLR)
-            c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
+    # Column headers: match panel column boundaries exactly
+    panel_hdrs = [
+        (1,      p1_end,  ["Name","YTD TV","GP%","Opportunity"][:p1_end],  PANEL_A_CLR),
+        (p1_end+1, p2_end, ["Name","YTD TV","GP%","Opportunity"][:p2_end-p1_end], PANEL_B_CLR),
+        (p2_end+1, p3_end, ["Name","YTD TV","GP%","Opportunity"][:p3_end-p2_end], PANEL_C_CLR),
+    ]
+    for c_start, c_end, hdrs_list, clr in panel_hdrs:
+        for idx, h in enumerate(hdrs_list):
+            ci = c_start + idx
+            if ci <= N_COLS:
+                c = ws.cell(ir3, ci, h)
+                c.font = hf(9); c.fill = fill(clr); c.alignment = CTR; c.border = bdr()
     ws.row_dimensions[ir3].height = 18
 
     data_rows_with_tv = [r for r in rows if r["tv"] > 0]
@@ -439,28 +457,42 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     panel_c = sorted(data_rows_with_tv,
                      key=lambda x: -(abs(x["tv"] * avg_gp_pct - x["gp"])))[:5]
 
+    # Column offsets within each panel (0-based within panel start)
     for pi in range(max(len(panel_a), len(panel_b), len(panel_c))):
         pr = ir3 + 1 + pi
         bg = LIGHT_GREY if pi % 2 == 0 else WHITE
+
+        # Panel A cols: 1 .. p1_end
         if pi < len(panel_a):
             ra = panel_a[pi]; ra_pct = ra["gp"]/ra["tv"]
             upside = ra["tv"] * (avg_gp_pct - ra_pct)
-            for ci,val,fmt in [(1,ra[id_key],None),(2,ra["tv"],AED),(3,ra_pct,PCT),(4,f"{upside:,.0f} AED upside",None)]:
+            pa_vals = [(ra[id_key],None),(ra["tv"],AED),(ra_pct,PCT),(f"{upside:,.0f} AED upside",None)]
+            for idx, (val, fmt) in enumerate(pa_vals[:p1_end]):
+                ci = 1 + idx
                 c = ws.cell(pr,ci,val); c.font=bf(sz=8); c.fill=fill(bg); c.border=bdr()
                 if fmt: c.number_format=fmt
+
+        # Panel B cols: p1_end+1 .. p2_end
         if pi < len(panel_b):
             rb = panel_b[pi]; rb_pct = rb["gp"]/rb["tv"]
-            for ci,val,fmt in [(5,rb[id_key],None),(6,rb["tv"],AED),(7,rb_pct,PCT)]:
-                c = ws.cell(pr,ci,val); c.font=bf(sz=8); c.fill=fill(bg); c.border=bdr()
-                if fmt: c.number_format=fmt
-        if pi < len(panel_c):
-            rc = panel_c[pi]; rc_pct = rc["gp"]/rc["tv"]
-            gap = rc["tv"] * avg_gp_pct - rc["gp"]
-            for ci,val,fmt in [(8,rc[id_key],None),(9,rc["tv"],AED),(10,rc_pct,PCT),
-                                (11,f"{gap:,.0f} AED {'gap' if gap>0 else 'above avg'}",None)]:
+            pb_vals = [(rb[id_key],None),(rb["tv"],AED),(rb_pct,PCT),(f"High margin",None)]
+            for idx, (val, fmt) in enumerate(pb_vals[:p2_end-p1_end]):
+                ci = p1_end + 1 + idx
                 if ci <= N_COLS:
                     c = ws.cell(pr,ci,val); c.font=bf(sz=8); c.fill=fill(bg); c.border=bdr()
                     if fmt: c.number_format=fmt
+
+        # Panel C cols: p2_end+1 .. p3_end
+        if pi < len(panel_c):
+            rc = panel_c[pi]; rc_pct = rc["gp"]/rc["tv"]
+            gap = rc["tv"] * avg_gp_pct - rc["gp"]
+            pc_vals = [(rc[id_key],None),(rc["tv"],AED),(rc_pct,PCT),(f"{gap:,.0f} AED {'gap' if gap>0 else 'above avg'}",None)]
+            for idx, (val, fmt) in enumerate(pc_vals[:p3_end-p2_end]):
+                ci = p2_end + 1 + idx
+                if ci <= N_COLS:
+                    c = ws.cell(pr,ci,val); c.font=bf(sz=8); c.fill=fill(bg); c.border=bdr()
+                    if fmt: c.number_format=fmt
+
         ws.row_dimensions[pr].height = 14
 
     # ── Operational Cadence ───────────────────────────────────────────────────
