@@ -113,7 +113,7 @@ def load_d2(xlsx_bytes):
 
 # ── Seasonality ───────────────────────────────────────────────────────────────
 MONTHS  = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
-WEIGHTS = [0.09, 0.08, 0.10, 0.10, 0.09, 0.08, 0.07, 0.07, 0.08, 0.09, 0.09, 0.06]
+WEIGHTS = [0.16, 0.10, 0.02, 0.05, 0.05, 0.06, 0.06, 0.07, 0.10, 0.09, 0.10, 0.14]
 
 
 def build_seasonality(ws, ag_rows, ytd_m):
@@ -350,10 +350,12 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP (Base) = proportional share of Seasonality GP total × own GP%
-        # = row_YTD_TV / total_YTD_TV × Seasonality!$G$16  (base, no adj)
+        # EOY GP (Base) = EOY_TV × own YTD GP%
+        # Uses each row's own margin — NOT the portfolio average.
+        # This means EOY GP% = YTD GP% for every row at baseline,
+        # so GP Delta = 0 until the user changes GP% Adj in Scenario Inputs.
         c = ws.cell(r, eog_col,
-            f"=IFERROR({tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$G$16,0)")
+            f"=IFERROR({eov_l}{r}*{gpp_l}{r},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
