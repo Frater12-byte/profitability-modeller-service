@@ -29,6 +29,7 @@ RGHT = Alignment(horizontal="right",  vertical="center")
 
 AED      = '#,##0;(#,##0);"-"'
 PCT      = '0.0%;(0.0%);"-"'
+PCT2     = '0.00%;(0.00%);"-"'   # 2 decimal places — for editable scenario inputs
 GP_DELTA = '[Color10]+#,##0;[Red]-#,##0;"-"'   # bright green positive / red negative
 gl = get_column_letter
 
@@ -152,8 +153,16 @@ def build_seasonality(ws, ag_rows, ytd_m):
         ytd_row = 3 + ytd_m   # the row containing the last completed month's cumulative factor
 
         c = ws.cell(r, 1, mo); c.font = bf(bold=True); c.fill = fill(bg); c.alignment = LEFT; c.border = bdr()
-        c = ws.cell(r, 2, wt); c.font = Font(name="Arial",size=9,color="0000FF")
-        c.fill = fill(GOLD); c.alignment = CTR; c.number_format = PCT; c.border = bdr()
+
+        if completed:
+            # Completed month weight — plain background, not editable highlight
+            c = ws.cell(r, 2, wt); c.font = bf(bold=True, color="595959")
+            c.fill = fill(bg); c.alignment = CTR; c.number_format = PCT; c.border = bdr()
+        else:
+            # Future month weight — gold, editable by user
+            c = ws.cell(r, 2, wt); c.font = Font(name="Arial",size=9,color="0000FF")
+            c.fill = fill(GOLD); c.alignment = CTR; c.number_format = PCT2; c.border = bdr()
+
         c = ws.cell(r, 3, f"=SUM($B$4:B{r})")
         c.font = bf(color="006100"); c.alignment = CTR; c.number_format = PCT; c.border = bdr()
 
@@ -330,15 +339,15 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c = ws.cell(r, gpp_col, f"=IFERROR({gp_l}{r}/IF({tv_l}{r}=0,1,{tv_l}{r}),0)")
         c.font = bf(); c.alignment = CTR; c.fill = fill(bg); c.border = bdr(); c.number_format = PCT
 
-        # GP% Adj — editable, gold, in percentage points
+        # GP% Adj — editable, gold, in percentage points, 2 decimal places
         c = ws.cell(r, adj_col, 0)
         c.font = Font(name="Arial",size=9,color="0000FF")
-        c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
+        c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT2
 
-        # TV Chg % — editable, gold
+        # TV Chg % — editable, gold, 2 decimal places
         c = ws.cell(r, tvc_col, 0)
         c.font = Font(name="Arial",size=9,color="0000FF")
-        c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
+        c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT2
 
         # EOY TV (adjusted) = proportional share × (1 + TV_Chg%)
         # This is what drives Adj GP — includes the TV volume uplift
