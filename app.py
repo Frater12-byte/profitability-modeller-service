@@ -244,16 +244,15 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     SEAS    = "Seasonality!$C$16"  # C16 = live YTD cumulative factor
 
     # ── KPI banner (rows 1-2) — 2 cols each, 12 cols total ──────────────────
-    # Label row: coloured background, white text
-    # Value row: white background, coloured text (visible!)
-    # EOY TV/GP reference Seasonality!F16/G16 (=SUM of all 12 projected months)
-    # so changing any weight in Seasonality col B flows through here automatically
+    # EOY TV (Base) and EOY GP (Base) sum the actual data rows so they always
+    # match — regardless of whether Seasonality was built from agency or customer data.
+    # EOY GP (Adjusted) also sums rows so all three are consistent.
     kpis = [
-        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
-        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
+        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",      AED, MID_BLUE,  "1F3864", 2),
+        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",      AED, MID_BLUE,  "1F3864", 2),
         ("YTD GP%",           f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)", PCT, MID_BLUE, "1F3864", 2),
-        ("EOY TV (Base)",     "=Seasonality!$F$16",  AED, GRN_HDR,  "375623", 2),
-        ("EOY GP (Base)",     "=Seasonality!$G$16",  AED, GRN_HDR,  "375623", 2),
+        ("EOY TV (Base)",     f"=SUM({eov_l}{DATA_START}:{eov_l}{DATA_END})",     AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Base)",     f"=SUM({eog_l}{DATA_START}:{eog_l}{DATA_END})",     AED, GRN_HDR,  "375623", 2),
         ("EOY GP (Adjusted)", f"=SUM({adjgp_l}{DATA_START}:{adjgp_l}{DATA_END})", AED, "7F3F00", "7F3F00", 2),
     ]
     col = 1
