@@ -74,22 +74,24 @@ def load_d1(xlsx_bytes):
         while len(row) < 20: row.append(None)
         ag, cu = row[0], row[1]
         if ag and isinstance(ag, str) and ag.strip():
+            # Skip the grand-total row (agency = 'Total')
+            if ag.strip().lower() == 'total':
+                continue
             cur_agency = ag.strip()
         if not cu or not cur_agency: continue
-        cu = str(cu).strip()
-        tv = _num(row[2])
-        gp = _num(row[9])
-        if cu == 'Total':
-            agencies[cur_agency] = dict(agency=cur_agency, tv=tv, gp=gp)
-            # Also add as a bold "subtotal" customer row for the Customer tab
-            customers.append(dict(agency=cur_agency, customer=f"── {cur_agency} TOTAL ──",
-                                  tv=tv, gp=gp, is_total=True))
-        else:
-            if tv > 0 or gp != 0:
-                customers.append(dict(agency=cur_agency, customer=cu, tv=tv, gp=gp, is_total=False))
+        cu_str = str(cu).strip() if isinstance(cu, str) else None
+        # Skip: agency subtotals (cu='Total'), grand total (agency='Total' already handled above),
+        # and any row where customer is not a real string name
+        if not cu_str or cu_str.lower() == 'total':
+            if cu_str and cu_str.lower() == 'total':
+                tv = _num(row[2]); gp = _num(row[9])
+                agencies[cur_agency] = dict(agency=cur_agency, tv=tv, gp=gp)
+            continue
+        tv = _num(row[2]); gp = _num(row[9])
+        if tv > 0 or gp != 0:
+            customers.append(dict(agency=cur_agency, customer=cu_str, tv=tv, gp=gp))
     ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
-    cu_list = sorted([r for r in customers if not r.get('is_total')],
-                     key=lambda x: -x['tv'])
+    cu_list = sorted(customers, key=lambda x: -x['tv'])   # ranked by TV descending
     return ag_list, cu_list
 
 
@@ -147,6 +149,7 @@ def build_seasonality(ws, ag_rows, ytd_m):
         r  = i + 4
         bg = LIGHT_GREY if i % 2 == 0 else WHITE
         completed = (i < ytd_m)
+        ytd_row = 3 + ytd_m   # the row containing the last completed month's cumulative factor
 
         c = ws.cell(r, 1, mo); c.font = bf(bold=True); c.fill = fill(bg); c.alignment = LEFT; c.border = bdr()
         c = ws.cell(r, 2, wt); c.font = Font(name="Arial",size=9,color="0000FF")
@@ -161,17 +164,20 @@ def build_seasonality(ws, ag_rows, ytd_m):
             c.fill = fill(GOLD); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
             c = ws.cell(r, 5, round(mo_gp, 2)); c.font = Font(name="Arial",size=9,color="0000FF")
             c.fill = fill(GOLD); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
-            c = ws.cell(r, 6, f"=IFERROR(D{r}/C{r}*B{r},0)")
+            # FIXED: use SUM($D$4:$D$ytd_row)/$C$ytd_row*B{r}  NOT D{r}/C{r}*B{r}
+            # Both completed AND future months must use the same annualisation base
+            c = ws.cell(r, 6, f"=IFERROR(SUM($D$4:$D${ytd_row})/$C${ytd_row}*B{r},0)")
             c.font = bf(bold=True,color="006100"); c.fill = fill(LIGHT_GRN); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
-            c = ws.cell(r, 7, f"=IFERROR(E{r}/C{r}*B{r},0)")
+            c = ws.cell(r, 7, f"=IFERROR(SUM($E$4:$E${ytd_row})/$C${ytd_row}*B{r},0)")
             c.font = bf(bold=True,color="006100"); c.fill = fill(LIGHT_GRN); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
-            note = "\u25cf  Actual \u00f7 YTD wt \u00d7 mo. wt"
+            note = f"\u25cf  Actual \u00f7 YTD wt ({int(ytd_wt*100)}%) \u00d7 mo. wt"
         else:
-            for col in [4, 5]:
-                c = ws.cell(r, col, ""); c.fill = fill(bg); c.border = bdr()
-            c = ws.cell(r, 6, f"=IFERROR(SUM(D$4:D${3+ytd_m})/C{3+ytd_m}*B{r},0)")
+            for col_n in [4, 5]:
+                c = ws.cell(r, col_n, ""); c.fill = fill(bg); c.border = bdr()
+            # Same formula as completed months — consistent annualisation
+            c = ws.cell(r, 6, f"=IFERROR(SUM($D$4:$D${ytd_row})/$C${ytd_row}*B{r},0)")
             c.font = bf(color="006100"); c.fill = fill(LIGHT_GRN); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
-            c = ws.cell(r, 7, f"=IFERROR(SUM(E$4:E${3+ytd_m})/C{3+ytd_m}*B{r},0)")
+            c = ws.cell(r, 7, f"=IFERROR(SUM($E$4:$E${ytd_row})/$C${ytd_row}*B{r},0)")
             c.font = bf(color="006100"); c.fill = fill(LIGHT_GRN); c.alignment = RGHT; c.number_format = AED; c.border = bdr()
             note = f"\u25cb  Forecast: YTD \u00f7 {int(ytd_wt*100)}% \u00d7 {int(wt*100)}%"
 
@@ -240,12 +246,14 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     # ── KPI banner (rows 1-2) — 2 cols each, 12 cols total ──────────────────
     # Label row: coloured background, white text
     # Value row: white background, coloured text (visible!)
+    # EOY TV/GP reference Seasonality!F16/G16 (=SUM of all 12 projected months)
+    # so changing any weight in Seasonality col B flows through here automatically
     kpis = [
         ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
         ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",   AED, MID_BLUE,  "1F3864", 2),
         ("YTD GP%",           f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)", PCT, MID_BLUE, "1F3864", 2),
-        ("EOY TV (Base)",     f"=SUM({eov_l}{DATA_START}:{eov_l}{DATA_END})",  AED, GRN_HDR,  "375623", 2),
-        ("EOY GP (Base)",     f"=SUM({eog_l}{DATA_START}:{eog_l}{DATA_END})",  AED, GRN_HDR,  "375623", 2),
+        ("EOY TV (Base)",     "=Seasonality!$F$16",  AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Base)",     "=Seasonality!$G$16",  AED, GRN_HDR,  "375623", 2),
         ("EOY GP (Adjusted)", f"=SUM({adjgp_l}{DATA_START}:{adjgp_l}{DATA_END})", AED, "7F3F00", "7F3F00", 2),
     ]
     col = 1
@@ -333,18 +341,19 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c.font = Font(name="Arial",size=9,color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
 
-        # EOY TV = YTD_TV x (1 + TV_Chg%) / Seasonality_YTD_factor
-        # Seasonality!$C$16 = =C{seas_row} = SUM($B$4:B{seas_row-1}) = cumulative weight up to current month
-        # Changing ANY weight in Seasonality col B auto-updates C column → C16 → all EOY here
+        # EOY TV = proportional share of Seasonality total
+        # = row_YTD_TV / total_YTD_TV × Seasonality!$F$16
+        # This guarantees SUM of all rows = Seasonality!$F$16 exactly
+        # TV Chg% then scales each row's share up/down
         c = ws.cell(r, eov_col,
-            f"=IFERROR({tv_l}{r}*(1+{tvc_l}{r})/IF({SEAS}=0,1,{SEAS}),0)")
+            f"=IFERROR({tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$F$16*(1+{tvc_l}{r}),0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP (Base) = YTD_TV / YTD_seasonality_factor x GP%
-        # Same Seasonality link — weight changes flow here too
+        # EOY GP (Base) = proportional share of Seasonality GP total × own GP%
+        # = row_YTD_TV / total_YTD_TV × Seasonality!$G$16  (base, no adj)
         c = ws.cell(r, eog_col,
-            f"=IFERROR({tv_l}{r}/IF({SEAS}=0,1,{SEAS})*{gpp_l}{r},0)")
+            f"=IFERROR({tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$G$16,0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
