@@ -221,48 +221,50 @@ def build_seasonality(ws, ag_rows, ytd_m):
 
 def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     """
-    Exact replica of reference modeller structure.
-    GP% Adj is in PERCENTAGE POINTS: e.g. 0.2% means +0.2pp, not +0.2% of total.
-    Adj. EOY GP = EOY_TV x (GP% + GP%Adj)
-    GP Delta = Adj GP - Base GP  (captures BOTH TV volume change AND margin change)
+    Column layout (after n_id identity cols):
+    YTD ACTUALS (3):    TV | GP | GP%
+    SCENARIO INPUTS (2): GP%Adj | TV_Chg%
+    EOY BASE FCST (3):  Base_EOY_TV | Base_EOY_GP | Base_EOY_GP%
+                        (pure seasonality projection, no adjustments)
+    ADJUSTED FCST (3):  Adj_EOY_TV | Adj_EOY_GP | GP_Delta
+                        (includes TV_Chg% and GP%_Adj)
+    Total data cols = 11, N_COLS = n_id + 11
     """
     ws.sheet_view.showGridLines = False
 
-    n_id      = 2 if agency_key else 1
-    N_COLS    = n_id + 10
+    n_id       = 2 if agency_key else 1
+    N_COLS     = n_id + 11
     DATA_START = 8
-    n_rows    = len(rows)
-    DATA_END  = DATA_START + n_rows - 1
+    n_rows     = len(rows)
+    DATA_END   = DATA_START + n_rows - 1
 
-    # Column positions
-    tv_col    = n_id + 1
-    gp_col    = n_id + 2
-    gpp_col   = n_id + 3
-    adj_col   = n_id + 4
-    tvc_col   = n_id + 5
-    eov_col   = n_id + 6
-    eog_col   = n_id + 7
-    eopc_col  = n_id + 8
-    adjgp_col = n_id + 9
-    delta_col = n_id + 10
+    # Column positions (1-based)
+    tv_col    = n_id + 1   # YTD TV
+    gp_col    = n_id + 2   # YTD GP
+    gpp_col   = n_id + 3   # YTD GP%
+    adj_col   = n_id + 4   # GP% Adj (editable)
+    tvc_col   = n_id + 5   # TV Chg% (editable)
+    beov_col  = n_id + 6   # Base EOY TV  (no TV_Chg)
+    beog_col  = n_id + 7   # Base EOY GP  (= Base_EOY_TV × GP%)
+    beopc_col = n_id + 8   # Base EOY GP% (= GP% always)
+    aeov_col  = n_id + 9   # Adj EOY TV   (Base × (1+TV_Chg%))
+    aeog_col  = n_id + 10  # Adj EOY GP   (Adj_TV × (GP%+GP%Adj))
+    delta_col = n_id + 11  # GP Delta     (Adj_GP − Base_GP)
 
-    tv_l    = gl(tv_col);  gp_l    = gl(gp_col);  gpp_l = gl(gpp_col)
-    adj_l   = gl(adj_col); tvc_l   = gl(tvc_col)
-    eov_l   = gl(eov_col); eog_l   = gl(eog_col); eop_l = gl(eopc_col)
-    adjgp_l = gl(adjgp_col)
-    SEAS    = "Seasonality!$C$16"  # C16 = live YTD cumulative factor
+    tv_l   = gl(tv_col);  gp_l   = gl(gp_col);  gpp_l  = gl(gpp_col)
+    adj_l  = gl(adj_col); tvc_l  = gl(tvc_col)
+    beov_l = gl(beov_col); beog_l = gl(beog_col); beopc_l = gl(beopc_col)
+    aeov_l = gl(aeov_col); aeog_l = gl(aeog_col)
+    SEAS   = "Seasonality!$F$16"  # full-year EOY TV total from Seasonality tab
 
-    # ── KPI banner (rows 1-2) — 2 cols each, 12 cols total ──────────────────
-    # EOY TV (Base) and EOY GP (Base) sum the actual data rows so they always
-    # match — regardless of whether Seasonality was built from agency or customer data.
-    # EOY GP (Adjusted) also sums rows so all three are consistent.
+    # ── KPI banner (rows 1-2) ────────────────────────────────────────────────
     kpis = [
-        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",      AED, MID_BLUE,  "1F3864", 2),
-        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",      AED, MID_BLUE,  "1F3864", 2),
+        ("YTD Total Value",   f"=SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})",       AED, MID_BLUE,  "1F3864", 2),
+        ("YTD Gross Profit",  f"=SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})",       AED, MID_BLUE,  "1F3864", 2),
         ("YTD GP%",           f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)", PCT, MID_BLUE, "1F3864", 2),
-        ("EOY TV (Base)",     f"=SUM({eov_l}{DATA_START}:{eov_l}{DATA_END})",     AED, GRN_HDR,  "375623", 2),
-        ("EOY GP (Base)",     f"=SUM({eog_l}{DATA_START}:{eog_l}{DATA_END})",     AED, GRN_HDR,  "375623", 2),
-        ("EOY GP (Adjusted)", f"=SUM({adjgp_l}{DATA_START}:{adjgp_l}{DATA_END})", AED, "7F3F00", "7F3F00", 2),
+        ("EOY TV (Base)",     f"=SUM({beov_l}{DATA_START}:{beov_l}{DATA_END})",    AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Base)",     f"=SUM({beog_l}{DATA_START}:{beog_l}{DATA_END})",    AED, GRN_HDR,  "375623", 2),
+        ("EOY GP (Adjusted)", f"=SUM({aeog_l}{DATA_START}:{aeog_l}{DATA_END})",    AED, "7F3F00", "7F3F00", 2),
     ]
     col = 1
     for label, formula, fmt, bg_clr, val_clr, span in kpis:
@@ -283,14 +285,10 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     ws.row_dimensions[5].height = 28
 
     # ── Row 6: colour bands ──────────────────────────────────────────────────
-    # Columns after identity cols:
-    #   YTD ACTUALS    = TV + GP + GP%          = 3 cols
-    #   SCENARIO INPUTS = GP%Adj + TVChg%        = 2 cols
-    #   EOY BASE FCST  = EOY_TV + EOY_GP + EOY_GP% = 3 cols
-    #   ADJUSTED FCST  = Adj_GP + Delta          = 2 cols
+    # n_id | 3 YTD ACTUALS | 2 SCENARIO INPUTS | 3 EOY BASE FCST | 3 ADJUSTED FCST
     bands = [(n_id,"",DARK_BLUE),(3,"◀  YTD ACTUALS",MID_BLUE),
              (2,"✏  SCENARIO INPUTS","7F3F00"),(3,"▶  EOY BASE FCST",GRN_HDR),
-             (2,"★  ADJUSTED FCST","375E23")]
+             (3,"★  ADJUSTED FCST","375E23")]
     col = 1
     for span, label, clr in bands:
         if span > 1: ws.merge_cells(start_row=6, start_column=col, end_row=6, end_column=col+span-1)
@@ -298,89 +296,92 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         col += span
     ws.row_dimensions[6].height = 18
 
-    # ── Row 7: headers ───────────────────────────────────────────────────────
+    # ── Row 7: column headers ─────────────────────────────────────────────────
     if agency_key:
-        hdrs = [" Agency", id_label, "YTD TV (AED)", "YTD GP (AED)", "YTD GP%",
-                "GP% Adj (+pp)", "TV Chg %", "EOY TV", "EOY GP", "EOY GP%",
-                "Adj. EOY GP", "GP Delta"]
+        hdrs = [" Agency", id_label,
+                "YTD TV (AED)", "YTD GP (AED)", "YTD GP%",
+                "GP% Adj (+pp)", "TV Chg %",
+                "EOY TV", "EOY GP", "EOY GP%",
+                "Adj. EOY TV", "Adj. EOY GP", "GP Delta"]
     else:
-        hdrs = [id_label, "YTD TV (AED)", "YTD GP (AED)", "YTD GP%",
-                "GP% Adj (+pp)", "TV Chg %", "EOY TV", "EOY GP", "EOY GP%",
-                "Adj. EOY GP", "GP Delta"]
+        hdrs = [id_label,
+                "YTD TV (AED)", "YTD GP (AED)", "YTD GP%",
+                "GP% Adj (+pp)", "TV Chg %",
+                "EOY TV", "EOY GP", "EOY GP%",
+                "Adj. EOY TV", "Adj. EOY GP", "GP Delta"]
     for ci, h in enumerate(hdrs, 1):
         c = ws.cell(7, ci, h); c.font = hf(9); c.fill = fill(MID_BLUE); c.alignment = CTR; c.border = bdr()
     ws.row_dimensions[7].height = 32
     ws.freeze_panes = "A8"
 
-    # ── Rows 8+: data ────────────────────────────────────────────────────────
+    # ── Rows 8+: data ─────────────────────────────────────────────────────────
+    TV_SUM = f"SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})"
+
     for ri, row in enumerate(rows):
         r   = DATA_START + ri
         is_tot = row.get("is_total", False)
         bg  = "D9E1F2" if is_tot else (PALE_BLUE if ri % 2 == 0 else WHITE)
-        row_font = bf(bold=True) if is_tot else bf()
-        bold_font_val = bf(bold=True) if is_tot else bf(bold=True)  # name always bold
 
+        # Identity cols
         col = 1
         if agency_key:
             c = ws.cell(r, col, row.get(agency_key, ""))
-            c.font = row_font; c.alignment = LEFT; c.fill = fill(bg); c.border = bdr(); col += 1
+            c.font = bf(bold=is_tot); c.alignment = LEFT; c.fill = fill(bg); c.border = bdr(); col += 1
         c = ws.cell(r, col, row.get(id_key, ""))
         c.font = bf(bold=True); c.alignment = LEFT; c.fill = fill(bg); c.border = bdr()
 
-        # YTD TV (hardcoded value)
+        # YTD TV
         c = ws.cell(r, tv_col, row.get("tv", 0) or 0)
         c.font = bf(); c.alignment = RGHT; c.fill = fill(bg); c.border = bdr(); c.number_format = AED
-
-        # YTD GP (hardcoded value)
+        # YTD GP
         c = ws.cell(r, gp_col, row.get("gp", 0) or 0)
         c.font = bf(); c.alignment = RGHT; c.fill = fill(bg); c.border = bdr(); c.number_format = AED
-
-        # YTD GP% = GP/TV  (formula, matches reference)
+        # YTD GP%
         c = ws.cell(r, gpp_col, f"=IFERROR({gp_l}{r}/IF({tv_l}{r}=0,1,{tv_l}{r}),0)")
         c.font = bf(); c.alignment = CTR; c.fill = fill(bg); c.border = bdr(); c.number_format = PCT
 
-        # GP% Adj — editable, gold, in percentage points, 2 decimal places
+        # GP% Adj (editable, gold, 2dp)
         c = ws.cell(r, adj_col, 0)
         c.font = Font(name="Arial",size=9,color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT2
-
-        # TV Chg % — editable, gold, 2 decimal places
+        # TV Chg% (editable, gold, 2dp)
         c = ws.cell(r, tvc_col, 0)
         c.font = Font(name="Arial",size=9,color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT2
 
-        # EOY TV (adjusted) = proportional share × (1 + TV_Chg%)
-        # This is what drives Adj GP — includes the TV volume uplift
-        c = ws.cell(r, eov_col,
-            f"=IFERROR({tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$F$16*(1+{tvc_l}{r}),0)")
+        # Base EOY TV = proportional share of Seasonality total (NO TV_Chg%)
+        c = ws.cell(r, beov_col,
+            f"=IFERROR({tv_l}{r}/IF({TV_SUM}=0,1,{TV_SUM})*{SEAS},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP (Base) = base EOY TV (NO TV_Chg%) × own GP%
-        # Deliberately excludes TV_Chg% so that any TV volume change shows in GP Delta
-        # Delta = Adj GP − Base GP = captures BOTH volume growth AND margin improvement
-        base_eov = f"{tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$F$16"
-        c = ws.cell(r, eog_col,
-            f"=IFERROR(({base_eov})*{gpp_l}{r},0)")
+        # Base EOY GP = Base_EOY_TV × GP%  → EOY GP% = YTD GP% always
+        c = ws.cell(r, beog_col,
+            f"=IFERROR({beov_l}{r}*{gpp_l}{r},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP%
-        c = ws.cell(r, eopc_col,
-            f"=IFERROR({eog_l}{r}/IF({eov_l}{r}=0,1,{eov_l}{r}),0)")
+        # Base EOY GP% = always equals YTD GP%
+        c = ws.cell(r, beopc_col,
+            f"=IFERROR({beog_l}{r}/IF({beov_l}{r}=0,1,{beov_l}{r}),0)")
         c.font = bf(color="006100"); c.alignment = CTR
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = PCT
 
-        # Adj. EOY GP = EOY_TV (with TV_Chg%) x (GP% + GP%_Adj)
-        # This means BOTH TV volume change AND margin change affect adjusted GP
-        c = ws.cell(r, adjgp_col,
-            f"=IFERROR({eov_l}{r}*({gpp_l}{r}+{adj_l}{r}),0)")
+        # Adj EOY TV = Base_EOY_TV × (1 + TV_Chg%)
+        c = ws.cell(r, aeov_col,
+            f"=IFERROR({beov_l}{r}*(1+{tvc_l}{r}),0)")
         c.font = bf(bold=True); c.alignment = RGHT
         c.fill = fill(LIGHT_BLUE); c.border = bdr(); c.number_format = AED
 
-        # GP Delta = Adj GP - Base GP
-        c = ws.cell(r, adjgp_col+1,
-            f"=IFERROR({gl(adjgp_col)}{r}-{eog_l}{r},0)")
+        # Adj EOY GP = Adj_EOY_TV × (GP% + GP%_Adj)
+        c = ws.cell(r, aeog_col,
+            f"=IFERROR({aeov_l}{r}*({gpp_l}{r}+{adj_l}{r}),0)")
+        c.font = bf(bold=True); c.alignment = RGHT
+        c.fill = fill(LIGHT_BLUE); c.border = bdr(); c.number_format = AED
+
+        # GP Delta = Adj_GP − Base_GP  (captures volume + margin)
+        c = ws.cell(r, delta_col,
+            f"=IFERROR({aeog_l}{r}-{beog_l}{r},0)")
         c.font = bf(); c.alignment = RGHT
         c.fill = fill(LIGHT_BLUE); c.border = bdr(); c.number_format = GP_DELTA
 
@@ -393,7 +394,7 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c = ws.cell(tr, ci)
         if ci in {adj_col, tvc_col}:
             c.value = ""
-        elif ci == gpp_col or ci == eopc_col:
+        elif ci in {gpp_col, beopc_col}:
             c.value = f"=IFERROR(SUM({gp_l}{DATA_START}:{gp_l}{DATA_END})/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})),0)"
             c.number_format = PCT; c.alignment = CTR
         else:
@@ -407,13 +408,10 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
     nr = tr + 1
     ws.merge_cells(start_row=nr, start_column=1, end_row=nr, end_column=N_COLS)
     c = ws.cell(nr, 1,
-        "YTD TV and GP are data inputs.  "
-        "EOY Base GP = YTD_TV \u00f7 YTD_seasonality_factor \u00d7 GP%.  "
-        "TV Chg% adjusts EOY TV volume (and base GP proportionally).  "
-        "GP% Adj is in PERCENTAGE POINTS added to current GP%: "
-        "e.g. GP%=2.8%, GP%Adj=0.2% \u2192 adjusted margin=3.0% (+0.2pp).  "
-        "Adj. EOY GP = EOY_TV(with TV Chg%) \u00d7 (GP% + GP%Adj).  "
-        "GP Delta = Adj GP \u2212 Base GP (reflects both volume and margin changes).")
+        "EOY Base = seasonality projection at current GP%, no adjustments.  "
+        "TV Chg% grows Adj EOY TV vs Base EOY TV.  "
+        "GP% Adj (+pp) adds margin points: e.g. GP%=2.8%, Adj=0.20% \u2192 adjusted=3.0%.  "
+        "GP Delta = Adj GP \u2212 Base GP (captures both volume growth and margin improvement).")
     c.font = bf(sz=8,color=DARK_GREY); c.alignment = LEFT
     ws.row_dimensions[nr].height = 14
 
