@@ -340,21 +340,19 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c.font = Font(name="Arial",size=9,color="0000FF")
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT
 
-        # EOY TV = proportional share of Seasonality total
-        # = row_YTD_TV / total_YTD_TV × Seasonality!$F$16
-        # This guarantees SUM of all rows = Seasonality!$F$16 exactly
-        # TV Chg% then scales each row's share up/down
+        # EOY TV (adjusted) = proportional share × (1 + TV_Chg%)
+        # This is what drives Adj GP — includes the TV volume uplift
         c = ws.cell(r, eov_col,
             f"=IFERROR({tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$F$16*(1+{tvc_l}{r}),0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
-        # EOY GP (Base) = EOY_TV × own YTD GP%
-        # Uses each row's own margin — NOT the portfolio average.
-        # This means EOY GP% = YTD GP% for every row at baseline,
-        # so GP Delta = 0 until the user changes GP% Adj in Scenario Inputs.
+        # EOY GP (Base) = base EOY TV (NO TV_Chg%) × own GP%
+        # Deliberately excludes TV_Chg% so that any TV volume change shows in GP Delta
+        # Delta = Adj GP − Base GP = captures BOTH volume growth AND margin improvement
+        base_eov = f"{tv_l}{r}/IF(SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})=0,1,SUM({tv_l}{DATA_START}:{tv_l}{DATA_END}))*Seasonality!$F$16"
         c = ws.cell(r, eog_col,
-            f"=IFERROR({eov_l}{r}*{gpp_l}{r},0)")
+            f"=IFERROR(({base_eov})*{gpp_l}{r},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
@@ -584,16 +582,17 @@ def build_dashboard(ws, today_str, data_month, ag_rows, de_rows, ytd_wt):
     ws.row_dimensions[2].height = 8
 
     # Rows 3-4: KPI banner — label row coloured bg/white text, value row white bg/coloured text
+    # EOY TV/GP reference Seasonality!F16/G16 so changing weights updates the dashboard live
     kpi_specs = [
-        ("YTD Total Value",   ytd_tv,  AED, MID_BLUE,  "1F3864"),
-        ("YTD Gross Profit",  ytd_gp,  AED, MID_BLUE,  "1F3864"),
-        ("YTD GP%",           gp_pct,  PCT, MID_BLUE,  "1F3864"),
-        ("EOY TV Forecast",   eoy_tv,  AED, GRN_HDR,   "375623"),
-        ("EOY GP Forecast",   eoy_gp,  AED, GRN_HDR,   "375623"),
-        ("EOY GP% Forecast",  gp_pct,  PCT, GRN_HDR,   "375623"),
+        ("YTD Total Value",   ytd_tv,                 AED, MID_BLUE,  "1F3864", False),
+        ("YTD Gross Profit",  ytd_gp,                 AED, MID_BLUE,  "1F3864", False),
+        ("YTD GP%",           gp_pct,                 PCT, MID_BLUE,  "1F3864", False),
+        ("EOY TV Forecast",   "=Seasonality!$F$16",   AED, GRN_HDR,   "375623", True),
+        ("EOY GP Forecast",   "=Seasonality!$G$16",   AED, GRN_HDR,   "375623", True),
+        ("EOY GP% Forecast",  gp_pct,                 PCT, GRN_HDR,   "375623", False),
     ]
     col = 1
-    for label, val, fmt, bg_clr, val_clr in kpi_specs:
+    for label, val, fmt, bg_clr, val_clr, is_formula in kpi_specs:
         ws.merge_cells(start_row=3, start_column=col, end_row=3, end_column=col+2)
         c = ws.cell(3, col, label); c.font = hf(9); c.fill = fill(bg_clr); c.alignment = CTR; c.border = bdr()
         ws.merge_cells(start_row=4, start_column=col, end_row=4, end_column=col+2)
@@ -673,14 +672,14 @@ def rebuild(d1_bytes, d2_bytes):
     data_month = MONTHS[ytd_m - 1] + " 2026"
 
     wb = openpyxl.Workbook()
-    db = wb.active;             db.title = "Dashboard"
-    ss = wb.create_sheet("Seasonality")
+    ss = wb.active;              ss.title = "Seasonality"   # ← first tab
+    db = wb.create_sheet("Dashboard")
     ag = wb.create_sheet("Agency Groups")
     cu = wb.create_sheet("Customer")
     de = wb.create_sheet("Destination")
 
-    build_dashboard(db, today_str, data_month, ag_rows, de_rows, ytd_wt)
     build_seasonality(ss, ag_rows, ytd_m)
+    build_dashboard(db, today_str, data_month, ag_rows, de_rows, ytd_wt)
     build_analysis_sheet(ag, "AGENCY GROUPS ANALYSIS", ag_rows, id_key="agency",    id_label="Agency Group")
     build_analysis_sheet(cu, "CUSTOMER ANALYSIS",      cu_rows, id_key="customer",  id_label="Customer", agency_key="agency")
     build_analysis_sheet(de, "DESTINATION ANALYSIS",   de_rows, id_key="country",   id_label="Country")
