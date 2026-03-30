@@ -219,7 +219,7 @@ def build_seasonality(ws, ag_rows, ytd_m):
         ws.column_dimensions[gl(ci)].width = w
 
 
-def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
+def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None, master_tv=None):
     """
     Column layout (after n_id identity cols):
     YTD ACTUALS (3):    TV | GP | GP%
@@ -316,6 +316,10 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
 
     # ── Rows 8+: data ─────────────────────────────────────────────────────────
     TV_SUM = f"SUM({tv_l}{DATA_START}:{tv_l}{DATA_END})"
+    # Denominator for proportional EOY share — always the master agency total so all
+    # tabs produce consistent EOY TV values for the same underlying booking volume.
+    # Falls back to the tab's own SUM if master_tv not provided.
+    TV_DENOM = str(round(master_tv)) if master_tv else TV_SUM
 
     for ri, row in enumerate(rows):
         r   = DATA_START + ri
@@ -350,8 +354,9 @@ def build_analysis_sheet(ws, title, rows, id_key, id_label, agency_key=None):
         c.alignment = CTR; c.fill = fill(GOLD); c.border = bdr(); c.number_format = PCT2
 
         # Base EOY TV = proportional share of Seasonality total (NO TV_Chg%)
+        # Uses master agency TV as denominator — consistent across all tabs
         c = ws.cell(r, beov_col,
-            f"=IFERROR({tv_l}{r}/IF({TV_SUM}=0,1,{TV_SUM})*{SEAS},0)")
+            f"=IFERROR({tv_l}{r}/IF({TV_DENOM}=0,1,{TV_DENOM})*{SEAS},0)")
         c.font = bf(bold=True,color="006100"); c.alignment = RGHT
         c.fill = fill(LIGHT_GRN); c.border = bdr(); c.number_format = AED
 
@@ -685,11 +690,16 @@ def rebuild(d1_bytes, d2_bytes):
     cu = wb.create_sheet("Customer")
     de = wb.create_sheet("Destination")
 
+    # Master TV total — from agency subtotals (authoritative source).
+    # Used as the denominator in all EOY proportional formulas so every tab
+    # produces consistent per-row EOY TV values.
+    master_tv = sum(r["tv"] for r in ag_rows)
+
     build_seasonality(ss, ag_rows, ytd_m)
     build_dashboard(db, today_str, data_month, ag_rows, de_rows, ytd_wt)
-    build_analysis_sheet(ag, "AGENCY GROUPS ANALYSIS", ag_rows, id_key="agency",    id_label="Agency Group")
-    build_analysis_sheet(cu, "CUSTOMER ANALYSIS",      cu_rows, id_key="customer",  id_label="Customer", agency_key="agency")
-    build_analysis_sheet(de, "DESTINATION ANALYSIS",   de_rows, id_key="country",   id_label="Country")
+    build_analysis_sheet(ag, "AGENCY GROUPS ANALYSIS", ag_rows, id_key="agency",   id_label="Agency Group", master_tv=master_tv)
+    build_analysis_sheet(cu, "CUSTOMER ANALYSIS",      cu_rows, id_key="customer", id_label="Customer", agency_key="agency", master_tv=master_tv)
+    build_analysis_sheet(de, "DESTINATION ANALYSIS",   de_rows, id_key="country",  id_label="Country",  master_tv=master_tv)
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out.read()
