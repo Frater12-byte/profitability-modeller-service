@@ -68,6 +68,29 @@ def _num(v):
 
 def load_d1(xlsx_bytes):
     all_rows = _parse_xlsx_rows(xlsx_bytes)
+
+    # ── Pass 1: collect agency subtotals and raw per-agency customer TV sums ──
+    agency_subtotals = {}
+    agency_cu_raw    = {}
+    cur_agency = None
+    for row in all_rows[1:]:
+        while len(row) < 20: row.append(None)
+        ag, cu = row[0], row[1]
+        if ag and isinstance(ag, str) and ag.strip():
+            if ag.strip().lower() == 'total': continue
+            cur_agency = ag.strip()
+        if not cu or not cur_agency: continue
+        cu_str = str(cu).strip() if isinstance(cu, str) else None
+        if not cu_str: continue
+        tv = _num(row[2])
+        if cu_str.lower() == 'total':
+            agency_subtotals[cur_agency] = tv
+        else:
+            agency_cu_raw[cur_agency] = agency_cu_raw.get(cur_agency, 0) + tv
+
+    # ── Pass 2: build customer list, scaled so customers sum = agency subtotal ─
+    # PowerBI individual rows often sum to slightly more than the agency Total row.
+    # Scaling by (subtotal / raw_sum) ensures perfect reconciliation across all tabs.
     agencies  = {}
     customers = []
     cur_agency = None
@@ -75,24 +98,27 @@ def load_d1(xlsx_bytes):
         while len(row) < 20: row.append(None)
         ag, cu = row[0], row[1]
         if ag and isinstance(ag, str) and ag.strip():
-            # Skip the grand-total row (agency = 'Total')
-            if ag.strip().lower() == 'total':
-                continue
+            if ag.strip().lower() == 'total': continue
             cur_agency = ag.strip()
         if not cu or not cur_agency: continue
         cu_str = str(cu).strip() if isinstance(cu, str) else None
-        # Skip: agency subtotals (cu='Total'), grand total (agency='Total' already handled above),
-        # and any row where customer is not a real string name
         if not cu_str or cu_str.lower() == 'total':
             if cu_str and cu_str.lower() == 'total':
                 tv = _num(row[2]); gp = _num(row[9])
                 agencies[cur_agency] = dict(agency=cur_agency, tv=tv, gp=gp)
             continue
         tv = _num(row[2]); gp = _num(row[9])
-        if tv > 0 or gp != 0:
-            customers.append(dict(agency=cur_agency, customer=cu_str, tv=tv, gp=gp))
+        if tv <= 0 and gp == 0: continue
+        raw_sum  = agency_cu_raw.get(cur_agency, 0)
+        subtotal = agency_subtotals.get(cur_agency, raw_sum)
+        scale    = (subtotal / raw_sum) if raw_sum else 1.0
+        customers.append(dict(
+            agency=cur_agency, customer=cu_str,
+            tv=tv * scale, gp=gp * scale
+        ))
+
     ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
-    cu_list = sorted(customers, key=lambda x: -x['tv'])   # ranked by TV descending
+    cu_list = sorted(customers, key=lambda x: -x['tv'])
     return ag_list, cu_list
 
 
