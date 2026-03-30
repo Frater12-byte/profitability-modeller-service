@@ -82,15 +82,18 @@ def load_d1(xlsx_bytes):
         if not cu or not cur_agency: continue
         cu_str = str(cu).strip() if isinstance(cu, str) else None
         if not cu_str: continue
-        tv = _num(row[2])
+        tv = _num(row[2]); gp = _num(row[9])
         if cu_str.lower() == 'total':
-            agency_subtotals[cur_agency] = tv
+            agency_subtotals[cur_agency] = {'tv': tv, 'gp': gp}
         else:
-            agency_cu_raw[cur_agency] = agency_cu_raw.get(cur_agency, 0) + tv
+            if cur_agency not in agency_cu_raw:
+                agency_cu_raw[cur_agency] = {'tv': 0, 'gp': 0}
+            agency_cu_raw[cur_agency]['tv'] += tv
+            agency_cu_raw[cur_agency]['gp'] += gp
 
-    # ── Pass 2: build customer list, scaled so customers sum = agency subtotal ─
-    # PowerBI individual rows often sum to slightly more than the agency Total row.
-    # Scaling by (subtotal / raw_sum) ensures perfect reconciliation across all tabs.
+    # ── Pass 2: build customer list, scale TV and GP independently ─────────────
+    # PowerBI individual rows don't always sum to agency subtotals.
+    # We scale TV and GP by separate factors so both totals reconcile exactly.
     agencies  = {}
     customers = []
     cur_agency = None
@@ -109,12 +112,13 @@ def load_d1(xlsx_bytes):
             continue
         tv = _num(row[2]); gp = _num(row[9])
         if tv <= 0 and gp == 0: continue
-        raw_sum  = agency_cu_raw.get(cur_agency, 0)
-        subtotal = agency_subtotals.get(cur_agency, raw_sum)
-        scale    = (subtotal / raw_sum) if raw_sum else 1.0
+        raw = agency_cu_raw.get(cur_agency, {'tv': 0, 'gp': 0})
+        sub = agency_subtotals.get(cur_agency, {'tv': raw['tv'], 'gp': raw['gp']})
+        scale_tv = (sub['tv'] / raw['tv']) if raw['tv'] else 1.0
+        scale_gp = (sub['gp'] / raw['gp']) if raw['gp'] else 1.0
         customers.append(dict(
             agency=cur_agency, customer=cu_str,
-            tv=tv * scale, gp=gp * scale
+            tv=tv * scale_tv, gp=gp * scale_gp
         ))
 
     ag_list = sorted(agencies.values(), key=lambda x: -x['tv'])
@@ -124,6 +128,26 @@ def load_d1(xlsx_bytes):
 
 def load_d2(xlsx_bytes):
     all_rows = _parse_xlsx_rows(xlsx_bytes)
+
+    # Pass 1: capture the authoritative Total row and raw sums
+    total_tv = 0; total_gp = 0
+    raw_tv   = 0; raw_gp   = 0
+    for row in all_rows[1:]:
+        while len(row) < 10: row.append(None)
+        co = row[0]
+        if not co or not isinstance(co, str): continue
+        co = co.strip()
+        tv = _num(row[1]); gp = _num(row[8])
+        if co.lower() == 'total':
+            total_tv = tv; total_gp = gp
+        elif tv > 0 or gp != 0:
+            raw_tv += tv; raw_gp += gp
+
+    # Scale factors: bring row sums up to the Total row
+    scale_tv = (total_tv / raw_tv) if raw_tv else 1.0
+    scale_gp = (total_gp / raw_gp) if raw_gp else 1.0
+
+    # Pass 2: build scaled destination rows
     rows = []
     for row in all_rows[1:]:
         while len(row) < 10: row.append(None)
@@ -131,10 +155,9 @@ def load_d2(xlsx_bytes):
         if not co or not isinstance(co, str): continue
         co = co.strip()
         if co.lower() == 'total': continue
-        tv = _num(row[1])
-        gp = _num(row[8])
+        tv = _num(row[1]); gp = _num(row[8])
         if tv > 0 or gp != 0:
-            rows.append(dict(country=co, tv=tv, gp=gp))
+            rows.append(dict(country=co, tv=tv * scale_tv, gp=gp * scale_gp))
     return sorted(rows, key=lambda x: -x['tv'])
 
 
@@ -716,16 +739,16 @@ def rebuild(d1_bytes, d2_bytes):
     cu = wb.create_sheet("Customer")
     de = wb.create_sheet("Destination")
 
-    # Master TV total — from agency subtotals (authoritative source).
-    # Used as the denominator in all EOY proportional formulas so every tab
-    # produces consistent per-row EOY TV values.
-    master_tv = sum(r["tv"] for r in ag_rows)
+    # master_tv for agency + customer tabs = agency subtotal total (authoritative)
+    master_tv    = sum(r["tv"] for r in ag_rows)
+    # master_tv for destination = destination's own scaled total (different export)
+    master_tv_de = sum(r["tv"] for r in de_rows)
 
     build_seasonality(ss, ag_rows, ytd_m)
     build_dashboard(db, today_str, data_month, ag_rows, de_rows, ytd_wt)
     build_analysis_sheet(ag, "AGENCY GROUPS ANALYSIS", ag_rows, id_key="agency",   id_label="Agency Group", master_tv=master_tv)
     build_analysis_sheet(cu, "CUSTOMER ANALYSIS",      cu_rows, id_key="customer", id_label="Customer", agency_key="agency", master_tv=master_tv)
-    build_analysis_sheet(de, "DESTINATION ANALYSIS",   de_rows, id_key="country",  id_label="Country",  master_tv=master_tv)
+    build_analysis_sheet(de, "DESTINATION ANALYSIS",   de_rows, id_key="country",  id_label="Country",  master_tv=master_tv_de)
 
     out = io.BytesIO(); wb.save(out); out.seek(0)
     return out.read()
